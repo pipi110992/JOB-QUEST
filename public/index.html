@@ -10,7 +10,8 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--ink);color:var(--text);font-family:"Sarabun",system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh}
 #hud{width:100%;max-width:800px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:8px 10px;background:var(--panel);border-bottom:3px solid var(--line);font-weight:700}
-#hud .bar{width:110px;height:12px;background:#0b132b;border:2px solid var(--line)}
+#hud[hidden]{display:none}
+#hud .bar{display:inline-block;vertical-align:middle;width:110px;height:12px;background:#0b132b;border:2px solid var(--line)}
 #hud .bar i{display:block;height:100%;background:var(--lime);width:100%}
 #wrap{position:relative;width:100%;max-width:800px}
 canvas{width:100%;height:auto;display:block;image-rendering:pixelated;background:#5aa65a;touch-action:none}
