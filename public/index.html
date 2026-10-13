@@ -9,33 +9,35 @@
 :root{--ink:#14213d;--panel:#1d2b53;--line:#3b4f94;--lime:#9be564;--gold:#ffd23f;--red:#ff5e5b;--text:#f4f7ff}
 *{box-sizing:border-box}
 body{margin:0;background:var(--ink);color:var(--text);font-family:"Sarabun",system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh}
-#hud{width:100%;max-width:800px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:8px 10px;background:var(--panel);border-bottom:3px solid var(--line);font-weight:700}
+#hud{width:100%;max-width:800px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:8px 10px;background:var(--panel);border-bottom:3px solid var(--line);font-weight:700}
 #hud[hidden]{display:none}
-#hud .bar{display:inline-block;vertical-align:middle;width:110px;height:12px;background:#0b132b;border:2px solid var(--line)}
+#hud .bar{display:inline-block;vertical-align:middle;width:100px;height:12px;background:#0b132b;border:2px solid var(--line)}
 #hud .bar i{display:block;height:100%;background:var(--lime);width:100%}
 #wrap{position:relative;width:100%;max-width:800px}
 canvas{width:100%;height:auto;display:block;image-rendering:pixelated;background:#5aa65a;touch-action:none}
-.panel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92%,380px);background:var(--panel);border:3px solid var(--gold);padding:14px;display:none}
+.panel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(94%,400px);max-height:94%;overflow:auto;background:var(--panel);border:3px solid var(--gold);padding:14px;display:none}
 .panel h3{margin:0 0 8px}
 button{font:inherit;font-weight:700;background:var(--gold);color:var(--ink);border:0;border-bottom:4px solid #b88f00;padding:8px 12px;margin:3px 3px 3px 0;cursor:pointer}
 button:disabled{background:#6b7399;border-color:#4a5174;color:#c8cde6;cursor:not-allowed}
 button:focus-visible,input:focus-visible{outline:3px solid #fff;outline-offset:2px}
 input{font:inherit;padding:8px;width:100%;margin:4px 0 8px;border:2px solid var(--line);background:#0b132b;color:var(--text)}
-#toast{position:absolute;top:8px;left:50%;transform:translateX(-50%);background:#000c;border:2px solid var(--gold);padding:6px 12px;display:none;max-width:90%;text-align:center}
+#toast{position:absolute;top:8px;left:50%;transform:translateX(-50%);background:#000c;border:2px solid var(--gold);padding:6px 12px;display:none;max-width:90%;text-align:center;z-index:5}
 #pad{display:none;gap:6px;margin:8px;grid-template-columns:repeat(3,56px)}
 #pad button{height:48px;font-size:1.2rem}
 @media (pointer:coarse){#pad{display:grid}}
 .arrow{font-size:2rem;letter-spacing:.4em}
 .muted{color:#aab4e0;font-size:.9rem}
-#teacher button{background:var(--lime);border-color:#5da02d}
+.green button{background:var(--lime);border-color:#5da02d}
+#btnSwitch{background:#ff9f1c;border-color:#b86a00;padding:4px 8px;margin:0}
 </style>
 </head>
 <body>
 <div id="hud" hidden>
   <span id="hNick"></span><span id="hCareer"></span>
-  <span>💰 <b id="hMoney">0</b></span>
+  <span>💰 <b id="hMoney">0</b></span><span>🏦 <b id="hBank">0</b></span>
   <span>🍚 <span class="bar"><i id="hHunger"></i></span></span>
   <span id="hDay"></span>
+  <button id="btnSwitch" hidden>เปลี่ยนอาชีพ (ทดสอบ)</button>
 </div>
 <div id="wrap">
   <canvas id="cv" width="800" height="520"></canvas>
@@ -51,9 +53,10 @@ input{font:inherit;padding:8px;width:100%;margin:4px 0 8px;border:2px solid var(
   </div>
 
   <div class="panel" id="pPick">
-    <h3>เลือกอาชีพ</h3>
+    <h3 id="pickTitle">เลือกอาชีพ</h3>
     <p id="pickInfo" class="muted"></p>
     <div id="pickBtns"></div>
+    <button data-close id="pickClose" hidden>ปิด</button>
   </div>
 
   <div class="panel" id="pShop">
@@ -63,17 +66,23 @@ input{font:inherit;padding:8px;width:100%;margin:4px 0 8px;border:2px solid var(
     <button data-close>ปิด</button>
   </div>
 
-  <div class="panel" id="pRest">
-    <h3>ร้านอาหาร</h3>
-    <p id="restInfo" class="muted"></p>
-    <div id="cookGame" hidden>
-      <div class="arrow" id="seq"></div>
-      <p class="muted">กดลูกศรตามลำดับให้ครบ</p>
-    </div>
-    <button id="bCook">เริ่มทำอาหาร</button><button data-close>ปิด</button>
+  <div class="panel" id="pBank">
+    <h3>ธนาคาร</h3>
+    <p>เงินสด <b id="bkCash"></b> | เงินฝาก <b id="bkBank"></b></p>
+    <input id="amt" type="number" min="1" placeholder="จำนวนเงิน" inputmode="numeric">
+    <button id="bDep">ฝาก</button><button id="bWd">ถอน</button><button id="bDepAll">ฝากทั้งหมด</button><button id="bWdAll">ถอนทั้งหมด</button>
+    <p class="muted" id="rates"></p>
+    <button data-close>ปิด</button>
   </div>
 
-  <div class="panel" id="teacher" style="top:auto;bottom:8px;transform:translateX(-50%);border-color:var(--lime)">
+  <div class="panel" id="pWork">
+    <h3 id="wTitle"></h3>
+    <p id="wInfo" class="muted"></p>
+    <div id="game" hidden><div class="arrow" id="seq"></div><p class="muted">กดลูกศรตามลำดับให้ครบ</p></div>
+    <button id="bWork">เริ่มทำงาน</button><button data-close>ปิด</button>
+  </div>
+
+  <div class="panel green" id="teacher" style="top:auto;bottom:8px;transform:translateX(-50%);border-color:var(--lime)">
     <h3>แผงควบคุมครู</h3>
     <p class="muted" id="tInfo"></p>
     <button data-t="select">เริ่มเลือกอาชีพ</button><button data-t="skip">ข้ามคิว</button>
@@ -91,31 +100,34 @@ input{font:inherit;padding:8px;width:100%;margin:4px 0 8px;border:2px solid var(
 const $ = id => document.getElementById(id);
 const socket = io();
 const cv = $('cv'), g = cv.getContext('2d');
-g.imageSmoothingEnabled = false;
-let me = null, world = null, others = [], B = {}, cfg = {}, teacher = false;
+let me = null, world = null, others = [], B = {}, cfg = {}, teacher = false, creds = null;
 let pos = { x: 400, y: 300 }, keys = {};
-const COLORS = { gov: '#4cc9f0', food: '#ff9f1c', grocer: '#9be564', null: '#e0e0e0' };
-const LABEL = { gov: 'ข้าราชการ', food: 'คนขายอาหาร', grocer: 'เจ้าของร้านชำ' };
+const COLORS = { gov: '#4cc9f0', food: '#ff9f1c', grocer: '#9be564', farmer: '#6a994e', rider: '#f72585', nurse: '#ffffff', labor: '#ffd23f', null: '#e0e0e0' };
 
 function toast(m) {
   const t = $('toast'); t.textContent = m; t.style.display = 'block';
-  clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', 3200);
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', 3500);
 }
 const show = (id, on) => $(id).style.display = on ? 'block' : 'none';
-document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => { show('pShop', 0); show('pRest', 0); stopCook(); });
+const closeAll = () => { ['pShop', 'pBank', 'pWork'].forEach(i => show(i, 0)); if (switching) { switching = false; show('pPick', 0); } stopGame(); };
+document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeAll);
 
-// ----- ล็อกอิน -----
+// ----- ล็อกอิน (และล็อกอินใหม่อัตโนมัติเมื่อหลุดการเชื่อมต่อ) -----
 $('code').addEventListener('input', () => $('pwRow').hidden = $('code').value.trim().toUpperCase() !== 'TEACHER');
+function doLogin(cb) { socket.emit('login', { ...creds, x: pos.x, y: pos.y }, cb); }
 $('btnLogin').onclick = () => {
-  socket.emit('login', { code: $('code').value, nick: $('nick').value, password: $('pw').value }, r => {
-    if (!r.ok) return $('loginMsg').textContent = r.msg;
+  creds = { code: $('code').value, nick: $('nick').value, password: $('pw').value };
+  doLogin(r => {
+    if (!r.ok) { creds = null; return $('loginMsg').textContent = r.msg; }
     show('pLogin', 0);
     if (r.teacher) { teacher = true; show('teacher', 1); return; }
-    me = r.me; B = r.buildings; cfg = r.cfg; pos = { x: 400, y: 300 };
-    $('hud').hidden = false; refreshHud();
+    me = r.me; B = r.buildings; cfg = r.cfg;
+    $('hud').hidden = false; $('btnSwitch').hidden = !cfg.testSwitch; refreshHud();
   });
 };
-socket.on('kicked', () => { alert('มีการเข้าสู่ระบบจากอุปกรณ์อื่น'); location.reload(); });
+socket.on('connect', () => { if (creds) doLogin(r => { if (r.ok && r.me) me = r.me; toast(r.ok ? 'เชื่อมต่อใหม่แล้ว' : r.msg); }); });
+socket.on('disconnect', () => toast('หลุดการเชื่อมต่อ กำลังเชื่อมใหม่...'));
+socket.on('kicked', () => { creds = null; alert('มีการเข้าสู่ระบบจากอุปกรณ์อื่น'); location.reload(); });
 
 // ----- สถานะจากเซิร์ฟเวอร์ -----
 socket.on('me', m => { me = m; refreshHud(); });
@@ -126,72 +138,90 @@ socket.on('world', w => { world = w; updateWorldUi(); });
 function refreshHud() {
   if (!me) return;
   $('hNick').textContent = me.nick;
-  $('hCareer').textContent = me.career ? LABEL[me.career] : 'ว่างงาน';
-  $('hMoney').textContent = me.money;
+  $('hCareer').textContent = me.career && world ? world.careers[me.career].name : (me.career || 'ว่างงาน');
+  $('hMoney').textContent = me.money; $('hBank').textContent = me.bank;
   $('hHunger').style.width = me.hunger + '%';
   $('hHunger').style.background = me.hunger < 25 ? 'var(--red)' : 'var(--lime)';
 }
+let switching = false;
+function careerButtons(onPick, enabled) {
+  $('pickBtns').innerHTML = '';
+  for (const k in world.careers) {
+    const c = world.careers[k], b = document.createElement('button');
+    b.textContent = `${c.name} (เหลือ ${world.seats[k]})` + (c.minGrade ? ` เกรด ${c.minGrade.toFixed(2)}+` : '');
+    b.disabled = !enabled || (world.seats[k] <= 0 && me.career !== k) || me.grade < c.minGrade;
+    b.onclick = () => onPick(k);
+    $('pickBtns').appendChild(b);
+  }
+}
 function updateWorldUi() {
-  const mins = Math.floor((world.dayLen - world.elapsed) / 60), secs = (world.dayLen - world.elapsed) % 60;
-  $('hDay').textContent = `วันที่ ${world.day} (อีก ${mins}:${String(secs).padStart(2, '0')})` + (world.paused ? ' ⏸' : '');
+  const left = world.dayLen - world.elapsed;
+  $('hDay').textContent = `วันที่ ${world.day} (อีก ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')})` + (world.paused ? ' ⏸' : '');
+  refreshHud();
   if (teacher) {
-    $('tInfo').textContent = `สถานะ: ${world.phase}${world.paused ? ' (หยุดอยู่)' : ''} | คิวเลือก: ${world.pickerNick || '-'}`;
+    $('tInfo').textContent = `สถานะ: ${world.phase}${world.paused ? ' (หยุดอยู่)' : ''} | คิวเลือก: ${world.pickerNick || '-'} | คลังรัฐ: ${world.treasury}`;
     return;
   }
+  if (switching) { careerButtons(k => socket.emit('switch', k, r => { toast(r.ok ? 'เปลี่ยนอาชีพแล้ว' : r.msg); if (r.ok) closeAll(); }), true); return; }
   const picking = world.phase === 'selecting' && me && !me.career;
   show('pPick', picking);
+  $('pickClose').hidden = true; $('pickTitle').textContent = 'เลือกอาชีพ';
   if (picking) {
     const myTurn = world.pickerCode === me.code;
     $('pickInfo').textContent = myTurn ? 'ถึงคิวของคุณแล้ว เลือกได้เลย' : `รอคิว... ตอนนี้ถึงคิวของ ${world.pickerNick}`;
-    $('pickBtns').innerHTML = '';
-    for (const k in world.careers) {
-      const c = world.careers[k], b = document.createElement('button');
-      b.textContent = `${c.name} (เหลือ ${world.seats[k]})` + (c.minGrade ? ` เกรด ${c.minGrade.toFixed(2)}+` : '');
-      b.disabled = !myTurn || world.seats[k] <= 0 || me.grade < c.minGrade;
-      b.onclick = () => socket.emit('pick', k, r => !r.ok && toast(r.msg));
-      $('pickBtns').appendChild(b);
-    }
+    careerButtons(k => socket.emit('pick', k, r => !r.ok && toast(r.msg)), myTurn);
   }
 }
+$('btnSwitch').onclick = () => {
+  if (!world || document.querySelector('.panel[style*="block"]')) return;
+  switching = true; $('pickTitle').textContent = 'เปลี่ยนอาชีพ (โหมดทดสอบ)';
+  $('pickInfo').textContent = 'เลือกอาชีพใหม่ได้ทันที'; $('pickClose').hidden = false; show('pPick', 1); updateWorldUi();
+};
 document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => socket.emit('teacher', b.dataset.t, () => {}));
 
-// ----- ปฏิสัมพันธ์กับอาคาร -----
-const act = (ev, after) => socket.emit(ev, null, r => { toast(r.msg); after && after(r); });
+// ----- อาคาร -----
+const act = (ev, arg, after) => socket.emit(ev, arg, r => { toast(r.msg); after && after(r); });
 function nearBuilding() {
   for (const k in B) if (Math.hypot(pos.x - B[k].x, pos.y - B[k].y) < 90) return k;
   return null;
 }
-$('bMeal').onclick = () => act('buyMeal');
-$('bIng').onclick = () => act('buyIngredient');
-$('bStock').onclick = () => act('restock');
+$('bMeal').onclick = () => act('buyMeal'); $('bIng').onclick = () => act('buyIngredient'); $('bStock').onclick = () => act('restock');
+const amt = () => Number($('amt').value);
+$('bDep').onclick = () => act('deposit', amt()); $('bWd').onclick = () => act('withdraw', amt());
+$('bDepAll').onclick = () => act('deposit', me.money); $('bWdAll').onclick = () => act('withdraw', me.bank);
+const fmt = t => { let prev = 0; return t.map(([cap, r]) => { const s = `${prev + (prev ? 1 : 0)}${cap === null || cap > 1e8 ? '+' : '-' + cap}: ${Math.round(r * 100)}%`; prev = cap; return s; }).join(' | '); };
 function openBuilding() {
-  const n = nearBuilding();
+  const n = nearBuilding(); if (!n || !me || !world) return;
+  const c = me.career && world.careers[me.career];
   if (n === 'shop') {
-    $('bMeal').textContent = `ซื้ออาหาร (${cfg.meal})`;
-    $('bIng').textContent = `ซื้อวัตถุดิบ (${cfg.ingredient})`;
-    show('pShop', 1);
-  } else if (n === 'restaurant') {
-    $('restInfo').textContent = me.career === 'food'
-      ? `วัตถุดิบที่มี: ${me.ingredients} | ขายได้จานละ ${cfg.dish}`
-      : 'ร้านนี้สำหรับคนขายอาหาร';
-    $('bCook').disabled = me.career !== 'food';
-    show('pRest', 1);
-  }
+    $('bMeal').textContent = `ซื้ออาหาร (${cfg.meal})`; $('bIng').textContent = `ซื้อวัตถุดิบ (${cfg.ingredient})`; show('pShop', 1);
+  } else if (n === 'bank') {
+    $('bkCash').textContent = me.money; $('bkBank').textContent = me.bank;
+    $('rates').innerHTML = 'ดอกเบี้ยเงินฝากต่อวัน (ขั้นบันได)<br>' + fmt(cfg.interest.map(([a, b]) => [a > 1e8 ? 1e9 : a, b])) +
+      '<br>ภาษีเงินสดต่อวัน (ไม่รวมเงินฝาก)<br>' + fmt(cfg.tax.map(([a, b]) => [a > 1e8 ? 1e9 : a, b]));
+    show('pBank', 1);
+  } else if (c && c.site === n) {
+    $('wTitle').textContent = `${B[n].name} — ${c.name}`;
+    $('wInfo').textContent = `ได้ครั้งละ ${c.pay}` + (me.career === 'food' ? ` | วัตถุดิบที่มี: ${me.ingredients}` : '');
+    show('pWork', 1);
+  } else toast(`${B[n].name}: ไม่ใช่ที่ทำงานของคุณ`);
 }
+setInterval(() => { if ($('pBank').style.display === 'block' && me) { $('bkCash').textContent = me.money; $('bkBank').textContent = me.bank; } }, 500);
 
-// ----- มินิเกมทำอาหาร: กดลูกศร 3 ตัวตามลำดับ -----
+// ----- มินิเกมลูกศร -----
 let seq = [], si = 0;
 const AR = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' };
-$('bCook').onclick = () => {
-  seq = Array.from({ length: 3 }, () => Object.keys(AR)[Math.floor(Math.random() * 4)]); si = 0;
-  $('cookGame').hidden = false; renderSeq();
+$('bWork').onclick = () => {
+  const len = world.careers[me.career].len;
+  seq = Array.from({ length: len }, () => Object.keys(AR)[Math.floor(Math.random() * 4)]); si = 0;
+  $('game').hidden = false; renderSeq();
 };
-function renderSeq() { $('seq').textContent = seq.map((k, i) => i < si ? '✔' : AR[k]).join(' '); }
-function stopCook() { seq = []; $('cookGame').hidden = true; }
-function cookKey(k) {
+const renderSeq = () => $('seq').textContent = seq.map((k, i) => i < si ? '✔' : AR[k]).join(' ');
+function stopGame() { seq = []; $('game').hidden = true; }
+function gameKey(k) {
   if (!seq.length) return false;
-  if (k === seq[si]) { si++; renderSeq(); if (si === seq.length) { stopCook(); act('cook'); } }
-  else { toast('ผิดลำดับ ลองใหม่'); stopCook(); }
+  if (k === seq[si]) { si++; renderSeq(); if (si === seq.length) { stopGame(); act('work'); } }
+  else { toast('ผิดลำดับ ลองใหม่'); stopGame(); }
   return true;
 }
 
@@ -201,22 +231,23 @@ addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
   const k = MAP[e.key.toLowerCase()] || e.key;
   if (k === 'e' || k === 'E') return openBuilding();
-  if (AR[k] && cookKey(k)) { e.preventDefault(); return; }
+  if (AR[k] && gameKey(k)) { e.preventDefault(); return; }
   keys[k] = true;
 });
 addEventListener('keyup', e => keys[MAP[e.key.toLowerCase()] || e.key] = false);
+addEventListener('blur', () => keys = {});
 document.querySelectorAll('#pad [data-k]').forEach(b => {
-  b.onpointerdown = () => { if (!cookKey(b.dataset.k)) keys[b.dataset.k] = true; };
+  b.onpointerdown = () => { if (!gameKey(b.dataset.k)) keys[b.dataset.k] = true; };
   b.onpointerup = b.onpointerleave = () => keys[b.dataset.k] = false;
 });
 cv.addEventListener('dblclick', openBuilding);
 
 // ----- วาดฉาก -----
 function px(x, y, w, h, c) { g.fillStyle = c; g.fillRect(Math.round(x), Math.round(y), w, h); }
-function building(b, label, color) {
-  px(b.x - 40, b.y - 36, 80, 56, '#6b4f3a'); px(b.x - 46, b.y - 50, 92, 18, color);
+function building(b) {
+  px(b.x - 40, b.y - 36, 80, 56, '#6b4f3a'); px(b.x - 46, b.y - 50, 92, 18, b.color);
   px(b.x - 10, b.y - 2, 20, 22, '#2b1d14');
-  g.fillStyle = '#fff'; g.font = 'bold 14px Sarabun'; g.textAlign = 'center'; g.fillText(label, b.x, b.y + 38);
+  g.fillStyle = '#fff'; g.font = 'bold 14px Sarabun'; g.textAlign = 'center'; g.fillText(b.name, b.x, b.y + 38);
 }
 function person(x, y, color, nick) {
   px(x - 8, y - 4, 16, 18, color); px(x - 6, y - 16, 12, 12, '#f2c9a0'); px(x - 8, y + 14, 6, 4, '#222'); px(x + 2, y + 14, 6, 4, '#222');
@@ -236,7 +267,7 @@ function loop(t) {
   px(0, 0, 800, 520, '#5aa65a');
   for (let i = 0; i < 40; i++) for (let j = 0; j < 26; j++) if ((i * 7 + j * 13) % 11 === 0) px(i * 20 + 6, j * 20 + 6, 4, 4, '#4f9a50');
   px(0, 250, 800, 48, '#c9b58a'); px(380, 0, 40, 520, '#c9b58a');
-  if (B.shop) { building(B.shop, 'ร้านชำ', '#2a9d8f'); building(B.restaurant, 'ร้านอาหาร', '#e76f51'); }
+  for (const k in B) building(B[k]);
   const all = others.filter(o => !me || o.code !== me.code).map(o => ({ ...o }));
   if (me) all.push({ code: me.code, nick: me.nick, x: pos.x, y: pos.y, career: me.career });
   all.sort((a, b) => a.y - b.y).forEach(o => person(o.x, o.y, COLORS[o.career] || COLORS.null, o.nick));
