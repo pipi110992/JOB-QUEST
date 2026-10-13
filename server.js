@@ -5,7 +5,7 @@ const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const srv = http.createServer(app);
-const io = new Server(srv);
+const io = new Server(srv, { pingInterval: 10000, pingTimeout: 30000 });
 app.use(express.static('public'));
 
 const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
@@ -13,64 +13,77 @@ const TEACHER_PASSWORD = process.env.TEACHER_PASSWORD || '';
 
 // ===== ค่าที่ปรับสมดุลเกมได้ =====
 const C = {
-  DAY_SEC: 420,          // 1 วันในเกม = 7 นาที
-  RENT: 40,              // ค่าเช่า/วัน
-  HUNGER_DROP: 0.24,     // หิวลดต่อวินาที (~2.5 มื้อ/วัน)
-  MEAL_PRICE: 15, MEAL_FOOD: 40,
-  INGREDIENT_PRICE: 10,
-  DISH_PRICE: 30,        // คนขายอาหารขายได้ต่อจาน
+  DAY_SEC: 420,            // 1 วันในเกม = 7 นาที
+  RENT: 40,                // ค่าเช่า/วัน
+  HUNGER_DROP: 0.24,       // หิวลดต่อวินาที
+  MEAL_PRICE: 15, MEAL_FOOD: 40, INGREDIENT_PRICE: 10,
   RESTOCK_PAY: { grocer: 20, other: 10 },
-  COOLDOWN: 3500,        // มินิเกมทำซ้ำได้ทุกกี่ ms
-  REACH: 90,             // ระยะที่ถือว่าอยู่ใกล้อาคาร (px)
+  COOLDOWN: 3500,          // ทำงานซ้ำได้ทุกกี่ ms
+  REACH: 90,               // ระยะที่ถือว่าอยู่ใกล้อาคาร (px)
+  TEST_SWITCH: process.env.TEST_SWITCH !== 'off',  // ปุ่มเปลี่ยนอาชีพ (ตั้ง TEST_SWITCH=off ใน Render เพื่อปิด)
 };
-const CAREERS = {
-  gov:    { name: 'ข้าราชการ',     seats: 3, minGrade: 3.0, salary: 150 },
-  food:   { name: 'คนขายอาหาร',    seats: 5, minGrade: 0 },
-  grocer: { name: 'เจ้าของร้านชำ', seats: 4, minGrade: 0 },
+// ภาษีเงินสด/วัน และดอกเบี้ยเงินฝาก/วัน แบบขั้นบันได [เพดานของขั้น, อัตรา]
+const TAX = [[500, 0.03], [1000, 0.05], [2000, 0.08], [5000, 0.12], [10000, 0.17], [Infinity, 0.22]];
+const INTEREST = [[500, 0.01], [1000, 0.02], [2000, 0.03], [5000, 0.04], [Infinity, 0.05]];
+const bracket = (amt, table) => {
+  let sum = 0, prev = 0;
+  for (const [cap, rate] of table) { if (amt > prev) sum += (Math.min(amt, cap) - prev) * rate; prev = cap; }
+  return Math.round(sum);
 };
-const BUILDINGS = { shop: { x: 150, y: 130 }, restaurant: { x: 650, y: 130 } };
 
-const game = { day: 1, elapsed: 0, phase: 'lobby', paused: false, order: [], pick: 0 };
+// salary = เงินเดือนต่อวัน | site+pay+len = งานมินิเกม (len = จำนวนลูกศร)
+const CAREERS = {
+  gov:    { name: 'ข้าราชการ',       seats: 3, minGrade: 3.0, salary: 150 },
+  nurse:  { name: 'พยาบาล',          seats: 2, minGrade: 2.5, salary: 100, site: 'hospital', pay: 20, len: 3 },
+  food:   { name: 'คนขายอาหาร',      seats: 5, minGrade: 0, site: 'restaurant', pay: 30, len: 3, needIng: true },
+  grocer: { name: 'เจ้าของร้านชำ',   seats: 4, minGrade: 0 },
+  farmer: { name: 'เกษตรกร',         seats: 3, minGrade: 0, site: 'farm', pay: 18, len: 4 },
+  rider:  { name: 'ไรเดอร์',         seats: 2, minGrade: 0, site: 'depot', pay: 22, len: 5 },
+  labor:  { name: 'รับจ้างก่อสร้าง', seats: 4, minGrade: 0, site: 'site', pay: 14, len: 4 },
+};
+const BUILDINGS = {
+  shop:       { x: 100, y: 130, name: 'ร้านชำ',      color: '#2a9d8f' },
+  bank:       { x: 240, y: 130, name: 'ธนาคาร',      color: '#4361ee' },
+  hospital:   { x: 550, y: 130, name: 'โรงพยาบาล',   color: '#e5e5e5' },
+  restaurant: { x: 690, y: 130, name: 'ร้านอาหาร',   color: '#e76f51' },
+  farm:       { x: 110, y: 410, name: 'ฟาร์ม',        color: '#6a994e' },
+  depot:      { x: 280, y: 410, name: 'ศูนย์ส่งของ', color: '#f4a261' },
+  site:       { x: 600, y: 410, name: 'ไซต์ก่อสร้าง', color: '#ffd23f' },
+};
+
+const game = { day: 1, elapsed: 0, phase: 'lobby', paused: false, order: [], pick: 0, treasury: 0 };
 const players = new Map();   // code -> player (เฉพาะคนออนไลน์)
-let teacherSocket = null;
+let seatUsed = {};
 
 const near = (p, b) => Math.hypot(p.x - BUILDINGS[b].x, p.y - BUILDINGS[b].y) < C.REACH;
-const seatsLeft = () => {
-  const left = {};
-  for (const k in CAREERS) left[k] = CAREERS[k].seats;
-  for (const p of players.values()) if (p.career) left[p.career]--;
-  return left;
-};
-
-async function countSeatsDb() {
+async function refreshSeats() {
   const { data } = await db.from('players').select('career').not('career', 'is', null);
-  const used = {};
-  (data || []).forEach(r => (used[r.career] = (used[r.career] || 0) + 1));
-  return used;
+  seatUsed = {};
+  (data || []).forEach(r => (seatUsed[r.career] = (seatUsed[r.career] || 0) + 1));
 }
-
-async function savePlayer(p) {
-  await db.from('players').update({
-    nick: p.nick, career: p.career, money: p.money,
-    hunger: Math.round(p.hunger * 10) / 10, ingredients: p.ingredients,
-  }).eq('code', p.code);
-}
-const saveGame = () =>
-  db.from('game_state').update({ day: game.day, elapsed: game.elapsed, phase: game.phase }).eq('id', 1);
+const savePlayer = p => db.from('players').update({
+  nick: p.nick, career: p.career, money: p.money, bank: p.bank,
+  hunger: Math.round(p.hunger * 10) / 10, ingredients: p.ingredients,
+}).eq('code', p.code);
+const saveGame = () => db.from('game_state')
+  .update({ day: game.day, elapsed: game.elapsed, phase: game.phase, treasury: game.treasury }).eq('id', 1);
 const saveAll = () => Promise.all([...players.values()].map(savePlayer).concat(saveGame()));
 
 function worldState() {
   const pickerCode = game.order[game.pick];
+  const seats = {};
+  for (const k in CAREERS) seats[k] = CAREERS[k].seats - (seatUsed[k] || 0);
   return {
-    phase: game.phase, day: game.day, elapsed: game.elapsed, dayLen: C.DAY_SEC, paused: game.paused,
+    phase: game.phase, day: game.day, elapsed: game.elapsed, dayLen: C.DAY_SEC, paused: game.paused, treasury: game.treasury,
     pickerCode: game.phase === 'selecting' ? pickerCode || null : null,
     pickerNick: game.phase === 'selecting' ? (players.get(pickerCode)?.nick || '(ยังไม่ออนไลน์)') : null,
-    seats: seatsLeft(),
-    careers: Object.fromEntries(Object.entries(CAREERS).map(([k, v]) => [k, { name: v.name, minGrade: v.minGrade }])),
+    seats,
+    careers: Object.fromEntries(Object.entries(CAREERS).map(([k, v]) =>
+      [k, { name: v.name, minGrade: v.minGrade, site: v.site || null, len: v.len || 0, pay: v.pay || 0 }])),
   };
 }
 const meState = p => ({
-  code: p.code, nick: p.nick, career: p.career, money: p.money,
+  code: p.code, nick: p.nick, career: p.career, money: p.money, bank: p.bank,
   hunger: Math.round(p.hunger), ingredients: p.ingredients, grade: Number(p.grade),
 });
 const toast = (p, msg) => p.sid && io.to(p.sid).emit('toast', msg);
@@ -79,23 +92,25 @@ function dayTick() {
   game.day++; game.elapsed = 0;
   for (const p of players.values()) {
     const salary = p.career && CAREERS[p.career].salary || 0;
-    let note = `เริ่มวันที่ ${game.day}: `;
-    if (salary) { p.money += salary; note += `เงินเดือน +${salary} `; }
-    if (p.money >= C.RENT) { p.money -= C.RENT; note += `ค่าเช่า -${C.RENT}`; }
-    else { note += 'เงินไม่พอจ่ายค่าเช่า!'; }
-    toast(p, note);
+    const parts = [`วันที่ ${game.day}:`];
+    if (salary) { p.money += salary; parts.push(`เงินเดือน +${salary}`); }
+    const rent = Math.min(p.money, C.RENT); p.money -= rent;
+    parts.push(rent < C.RENT ? 'เงินไม่พอจ่ายค่าเช่า!' : `ค่าเช่า -${rent}`);
+    const tax = Math.min(p.money, bracket(p.money, TAX)); p.money -= tax; game.treasury += tax;
+    if (tax) parts.push(`ภาษี -${tax}`);
+    const interest = bracket(p.bank, INTEREST); p.bank += interest;
+    if (interest) parts.push(`ดอกเบี้ย +${interest}`);
+    toast(p, parts.join(' '));
   }
   saveAll();
 }
 
 setInterval(() => {
-  if (!players.size || game.paused || game.phase === 'lobby') {
-    io.emit('world', worldState());
-    return;
+  if (players.size && !game.paused && game.phase !== 'lobby') {
+    game.elapsed++;
+    for (const p of players.values()) p.hunger = Math.max(0, p.hunger - C.HUNGER_DROP);
+    if (game.elapsed >= C.DAY_SEC) dayTick();
   }
-  game.elapsed++;
-  for (const p of players.values()) p.hunger = Math.max(0, p.hunger - C.HUNGER_DROP);
-  if (game.elapsed >= C.DAY_SEC) dayTick();
   io.emit('world', worldState());
   for (const p of players.values()) p.sid && io.to(p.sid).emit('me', meState(p));
 }, 1000);
@@ -103,37 +118,40 @@ setInterval(() => {
 setInterval(() => {
   io.emit('players', [...players.values()].map(p => ({ code: p.code, nick: p.nick, x: p.x, y: p.y, career: p.career })));
 }, 100);
-
 setInterval(() => saveAll().catch(() => {}), 20000);
+setInterval(() => refreshSeats().catch(() => {}), 10000);
 
-// หลังขายของ ให้เงินไปที่เจ้าของร้านชำที่ออนไลน์ (ถ้ามี)
-function creditGrocer(amount) {
+function creditGrocer(amount) {   // เงินจากการซื้อของที่ร้านชำ ไปที่เจ้าของร้านที่ออนไลน์ (ถ้ามี)
   const g = [...players.values()].filter(p => p.career === 'grocer');
   if (!g.length) return;
   const p = g[Math.floor(Math.random() * g.length)];
-  p.money += amount;
-  toast(p, `ลูกค้าซื้อของที่ร้าน +${amount}`);
+  p.money += amount; toast(p, `ลูกค้าซื้อของที่ร้าน +${amount}`);
 }
 
 io.on('connection', socket => {
-  let p = null;
-  let isTeacher = false;
+  let p = null, isTeacher = false;
 
-  socket.on('login', async ({ code, nick, password }, ack) => {
+  socket.on('login', async ({ code, nick, password, x, y }, ack) => {
     code = String(code || '').trim().toUpperCase();
     if (code === 'TEACHER') {
       if (!TEACHER_PASSWORD || password !== TEACHER_PASSWORD) return ack({ ok: false, msg: 'รหัสครูไม่ถูกต้อง' });
-      isTeacher = true; teacherSocket = socket;
+      isTeacher = true;
       return ack({ ok: true, teacher: true });
     }
     const { data, error } = await db.from('players').select('*').eq('code', code).maybeSingle();
     if (error || !data) return ack({ ok: false, msg: 'ไม่พบรหัสนักเรียนนี้' });
     const old = players.get(code);
-    if (old) { io.to(old.sid).emit('kicked'); players.delete(code); }
-    p = { ...data, grade: Number(data.grade), hunger: Number(data.hunger), x: 400, y: 300, cd: 0, sid: socket.id };
-    p.nick = String(nick || data.nick || code).slice(0, 12);
+    const keep = old && old.sid !== socket.id ? old : null;   // ล็อกอินซ้ำ/เชื่อมต่อใหม่: ใช้ข้อมูลในหน่วยความจำที่ใหม่กว่า
+    if (keep) { io.to(keep.sid).emit('kicked'); players.delete(code); }
+    p = keep ? { ...keep, sid: socket.id } : {
+      ...data, grade: Number(data.grade), hunger: Number(data.hunger), bank: Number(data.bank) || 0,
+      x: 400, y: 300, cd: 0, sid: socket.id,
+    };
+    if (!keep) p.nick = String(nick || data.nick || code).slice(0, 12);
+    if (Number.isFinite(Number(x)) && Number.isFinite(Number(y))) { p.x = Number(x); p.y = Number(y); }
     players.set(code, p);
-    ack({ ok: true, me: meState(p), buildings: BUILDINGS, cfg: { meal: C.MEAL_PRICE, ingredient: C.INGREDIENT_PRICE, dish: C.DISH_PRICE } });
+    ack({ ok: true, me: meState(p), buildings: BUILDINGS,
+      cfg: { meal: C.MEAL_PRICE, ingredient: C.INGREDIENT_PRICE, testSwitch: C.TEST_SWITCH, tax: TAX, interest: INTEREST } });
   });
 
   socket.on('move', ({ x, y }) => {
@@ -142,33 +160,43 @@ io.on('connection', socket => {
     p.y = Math.max(10, Math.min(510, Number(y) || p.y));
   });
 
-  socket.on('pick', async (career, ack) => {
-    if (!p || game.phase !== 'selecting') return ack({ ok: false, msg: 'ยังไม่ถึงช่วงเลือกอาชีพ' });
-    if (game.order[game.pick] !== p.code) return ack({ ok: false, msg: 'ยังไม่ถึงคิวของคุณ' });
+  async function setCareer(career, ack, requireTurn) {
     const c = CAREERS[career];
     if (!c) return ack({ ok: false, msg: 'ไม่มีอาชีพนี้' });
     if (p.grade < c.minGrade) return ack({ ok: false, msg: `ต้องมีเกรด ${c.minGrade.toFixed(2)} ขึ้นไป` });
-    const used = await countSeatsDb();
-    if ((used[career] || 0) >= c.seats) return ack({ ok: false, msg: 'ที่นั่งเต็มแล้ว' });
-    p.career = career;
-    await savePlayer(p);
-    advancePick();
+    if (career !== p.career) {
+      const prev = p.career;
+      p.career = null; await savePlayer(p); await refreshSeats();   // คืนที่นั่งเดิมก่อนตรวจที่นั่งใหม่
+      if ((seatUsed[career] || 0) >= c.seats) {
+        p.career = prev; await savePlayer(p); await refreshSeats();
+        return ack({ ok: false, msg: 'ที่นั่งเต็มแล้ว' });
+      }
+    }
+    p.career = career; await savePlayer(p); await refreshSeats();
+    if (requireTurn) advancePick();
     ack({ ok: true });
+  }
+  socket.on('pick', (career, ack) => {
+    if (!p || game.phase !== 'selecting') return ack({ ok: false, msg: 'ยังไม่ถึงช่วงเลือกอาชีพ' });
+    if (game.order[game.pick] !== p.code) return ack({ ok: false, msg: 'ยังไม่ถึงคิวของคุณ' });
+    setCareer(career, ack, true);
+  });
+  socket.on('switch', (career, ack) => {   // ปุ่มทดสอบ: เปลี่ยนอาชีพ
+    if (!p || !C.TEST_SWITCH) return ack({ ok: false, msg: 'ปิดการเปลี่ยนอาชีพอยู่' });
+    if (game.phase !== 'playing') return ack({ ok: false, msg: 'เปลี่ยนได้เมื่อเกมเริ่มแล้ว' });
+    setCareer(career, ack, false);
   });
 
   socket.on('buyMeal', (_, ack) => {
     if (!p || !near(p, 'shop')) return ack({ ok: false, msg: 'ต้องอยู่ใกล้ร้านชำ' });
     if (p.money < C.MEAL_PRICE) return ack({ ok: false, msg: 'เงินไม่พอ' });
-    p.money -= C.MEAL_PRICE; p.hunger = Math.min(100, p.hunger + C.MEAL_FOOD);
-    creditGrocer(C.MEAL_PRICE);
+    p.money -= C.MEAL_PRICE; p.hunger = Math.min(100, p.hunger + C.MEAL_FOOD); creditGrocer(C.MEAL_PRICE);
     ack({ ok: true, msg: `ซื้ออาหาร -${C.MEAL_PRICE}` });
   });
-
   socket.on('buyIngredient', (_, ack) => {
     if (!p || !near(p, 'shop')) return ack({ ok: false, msg: 'ต้องอยู่ใกล้ร้านชำ' });
     if (p.money < C.INGREDIENT_PRICE) return ack({ ok: false, msg: 'เงินไม่พอ' });
-    p.money -= C.INGREDIENT_PRICE; p.ingredients++;
-    creditGrocer(C.INGREDIENT_PRICE);
+    p.money -= C.INGREDIENT_PRICE; p.ingredients++; creditGrocer(C.INGREDIENT_PRICE);
     ack({ ok: true, msg: `ซื้อวัตถุดิบ -${C.INGREDIENT_PRICE}` });
   });
 
@@ -178,16 +206,15 @@ io.on('connection', socket => {
     if (Date.now() - p.cd < C.COOLDOWN) { ack({ ok: false, msg: 'ช้าหน่อย รอสักครู่' }); return false; }
     return true;
   };
-
-  socket.on('cook', (_, ack) => {
-    if (!p || p.career !== 'food') return ack({ ok: false, msg: 'เฉพาะคนขายอาหาร' });
-    if (!near(p, 'restaurant')) return ack({ ok: false, msg: 'ต้องอยู่ที่ร้านอาหาร' });
+  socket.on('work', (_, ack) => {
+    const c = p && CAREERS[p.career];
+    if (!c || !c.site) return ack({ ok: false, msg: 'อาชีพนี้ไม่มีงานที่นี่' });
+    if (!near(p, c.site)) return ack({ ok: false, msg: `ต้องอยู่ที่${BUILDINGS[c.site].name}` });
     if (!canWork(ack)) return;
-    if (p.ingredients < 1) return ack({ ok: false, msg: 'วัตถุดิบหมด ไปซื้อที่ร้านชำ' });
-    p.cd = Date.now(); p.ingredients--; p.money += C.DISH_PRICE;
-    ack({ ok: true, msg: `ขายอาหาร +${C.DISH_PRICE}` });
+    if (c.needIng) { if (p.ingredients < 1) return ack({ ok: false, msg: 'วัตถุดิบหมด ไปซื้อที่ร้านชำ' }); p.ingredients--; }
+    p.cd = Date.now(); p.money += c.pay;
+    ack({ ok: true, msg: `ได้เงิน +${c.pay}` });
   });
-
   socket.on('restock', (_, ack) => {
     if (!p || !near(p, 'shop')) return ack({ ok: false, msg: 'ต้องอยู่ใกล้ร้านชำ' });
     if (!canWork(ack)) return;
@@ -196,23 +223,32 @@ io.on('connection', socket => {
     ack({ ok: true, msg: `จัดของ +${pay}` });
   });
 
-  // ===== ครู =====
+  socket.on('deposit', (amt, ack) => {
+    amt = Math.floor(Number(amt));
+    if (!p || !near(p, 'bank')) return ack({ ok: false, msg: 'ต้องอยู่ที่ธนาคาร' });
+    if (!(amt > 0) || amt > p.money) return ack({ ok: false, msg: 'จำนวนเงินไม่ถูกต้อง' });
+    p.money -= amt; p.bank += amt; ack({ ok: true, msg: `ฝากเงิน ${amt}` });
+  });
+  socket.on('withdraw', (amt, ack) => {
+    amt = Math.floor(Number(amt));
+    if (!p || !near(p, 'bank')) return ack({ ok: false, msg: 'ต้องอยู่ที่ธนาคาร' });
+    if (!(amt > 0) || amt > p.bank) return ack({ ok: false, msg: 'จำนวนเงินไม่ถูกต้อง' });
+    p.bank -= amt; p.money += amt; ack({ ok: true, msg: `ถอนเงิน ${amt}` });
+  });
+
   socket.on('teacher', async (cmd, ack) => {
     if (!isTeacher) return ack && ack({ ok: false });
     if (cmd === 'select') {
       const { data } = await db.from('players').select('code,grade').is('career', null).order('grade', { ascending: false });
-      game.order = (data || []).map(r => r.code); game.pick = 0; game.phase = 'selecting';
-      if (!game.order.length) game.phase = 'playing';
+      game.order = (data || []).map(r => r.code); game.pick = 0; game.phase = game.order.length ? 'selecting' : 'playing';
     } else if (cmd === 'skip') advancePick();
     else if (cmd === 'play') game.phase = 'playing';
     else if (cmd === 'pause') game.paused = !game.paused;
-    saveGame();
-    io.emit('world', worldState());
+    saveGame(); io.emit('world', worldState());
     ack && ack({ ok: true });
   });
 
   socket.on('disconnect', () => {
-    if (isTeacher && teacherSocket === socket) teacherSocket = null;
     if (p && players.get(p.code)?.sid === socket.id) { players.delete(p.code); savePlayer(p).catch(() => {}); }
   });
 });
@@ -220,19 +256,18 @@ io.on('connection', socket => {
 function advancePick() {
   game.pick++;
   if (game.pick >= game.order.length) game.phase = 'playing';
-  saveGame();
-  io.emit('world', worldState());
+  saveGame(); io.emit('world', worldState());
 }
 
 async function boot() {
   const { data } = await db.from('game_state').select('*').eq('id', 1).maybeSingle();
-  if (data) { game.day = data.day; game.elapsed = data.elapsed; game.phase = data.phase; }
-  if (game.phase === 'selecting') {   // กู้คิวเลือกอาชีพหลังเซิร์ฟเวอร์รีสตาร์ต
+  if (data) { game.day = data.day; game.elapsed = data.elapsed; game.phase = data.phase; game.treasury = data.treasury || 0; }
+  if (game.phase === 'selecting') {
     const { data: rows } = await db.from('players').select('code').is('career', null).order('grade', { ascending: false });
     game.order = (rows || []).map(r => r.code); game.pick = 0;
   }
+  await refreshSeats();
   srv.listen(process.env.PORT || 3000, () => console.log('เซิร์ฟเวอร์พร้อมแล้ว'));
 }
 boot();
-
 process.on('SIGTERM', async () => { await saveAll().catch(() => {}); process.exit(0); });
