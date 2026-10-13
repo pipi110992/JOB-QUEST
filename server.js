@@ -35,7 +35,7 @@ const bracket = (amt, table) => {
 const CAREERS = {
   gov:    { name: 'ข้าราชการ',       seats: 3, minGrade: 3.0, salary: 150 },
   nurse:  { name: 'พยาบาล',          seats: 2, minGrade: 2.5, salary: 100, site: 'hospital', pay: 20, len: 3 },
-  food:   { name: 'คนขายอาหาร',      seats: 5, minGrade: 0, site: 'restaurant', pay: 30, len: 3, needIng: true },
+  food:   { name: 'คนขายอาหาร',      seats: 5, minGrade: 0, site: 'restaurant', mini: 'cook' },
   grocer: { name: 'เจ้าของร้านชำ',   seats: 4, minGrade: 0 },
   farmer: { name: 'เกษตรกร',         seats: 3, minGrade: 0, site: 'farm', pay: 18, len: 4 },
   rider:  { name: 'ไรเดอร์',         seats: 2, minGrade: 0, site: 'depot', pay: 22, len: 5 },
@@ -50,6 +50,21 @@ const BUILDINGS = {
   depot:      { x: 280, y: 410, name: 'ศูนย์ส่งของ', color: '#f4a261' },
   site:       { x: 600, y: 410, name: 'ไซต์ก่อสร้าง', color: '#ffd23f' },
 };
+
+// ----- ข้อมูลมินิเกม -----
+const PALETTE = [
+  { id: 'rice', e: '🍚', n: 'ข้าว' }, { id: 'egg', e: '🥚', n: 'ไข่' }, { id: 'onion', e: '🧅', n: 'หอม' },
+  { id: 'pork', e: '🥩', n: 'หมู' }, { id: 'chili', e: '🌶️', n: 'พริก' }, { id: 'veg', e: '🥬', n: 'ผัก' },
+  { id: 'shrimp', e: '🦐', n: 'กุ้ง' }, { id: 'lime', e: '🍋', n: 'มะนาว' }, { id: 'mushroom', e: '🍄', n: 'เห็ด' },
+];
+const RECIPES = {
+  fried: { name: 'ข้าวผัดไข่', need: ['rice', 'egg', 'onion'], pay: 30 },
+  basil: { name: 'ผัดกะเพราหมู', need: ['pork', 'chili', 'veg', 'rice'], pay: 40 },
+  tom:   { name: 'ต้มยำกุ้ง', need: ['shrimp', 'lime', 'chili', 'mushroom'], pay: 45 },
+};
+const PRODUCTS = [['🥛', 'นม', 25], ['🍞', 'ขนมปัง', 20], ['🍌', 'กล้วย', 15], ['🧃', 'น้ำผลไม้', 12], ['🍪', 'คุกกี้', 18], ['🧴', 'สบู่', 45]];
+const BILLS = [20, 50, 100, 500, 1000];
+const rand = n => Math.floor(Math.random() * n);
 
 const game = { day: 1, elapsed: 0, phase: 'lobby', paused: false, order: [], pick: 0, treasury: 0 };
 const players = new Map();   // code -> player (เฉพาะคนออนไลน์)
@@ -209,6 +224,7 @@ io.on('connection', socket => {
   socket.on('work', (_, ack) => {
     const c = p && CAREERS[p.career];
     if (!c || !c.site) return ack({ ok: false, msg: 'อาชีพนี้ไม่มีงานที่นี่' });
+    if (c.mini) return ack({ ok: false, msg: 'อาชีพนี้ใช้มินิเกมของตัวเอง' });
     if (!near(p, c.site)) return ack({ ok: false, msg: `ต้องอยู่ที่${BUILDINGS[c.site].name}` });
     if (!canWork(ack)) return;
     if (c.needIng) { if (p.ingredients < 1) return ack({ ok: false, msg: 'วัตถุดิบหมด ไปซื้อที่ร้านชำ' }); p.ingredients--; }
@@ -217,10 +233,73 @@ io.on('connection', socket => {
   });
   socket.on('restock', (_, ack) => {
     if (!p || !near(p, 'shop')) return ack({ ok: false, msg: 'ต้องอยู่ใกล้ร้านชำ' });
+    if (p.career === 'grocer') return ack({ ok: false, msg: 'เจ้าของร้านใช้เคาน์เตอร์ชำระเงิน' });
     if (!canWork(ack)) return;
     const pay = p.career === 'grocer' ? C.RESTOCK_PAY.grocer : C.RESTOCK_PAY.other;
     p.cd = Date.now(); p.money += pay;
     ack({ ok: true, msg: `จัดของ +${pay}` });
+  });
+
+  // ===== มินิเกม: เซิร์ฟเวอร์ออกใบงาน แล้วตรวจคำตอบก่อนจ่ายเงิน =====
+  const gate = ack => {
+    if (game.paused || game.phase !== 'playing') { ack({ ok: false, msg: 'เกมยังไม่เริ่มหรือถูกหยุดอยู่' }); return false; }
+    if (p.hunger <= 0) { ack({ ok: false, msg: 'หิวเกินไป ไปกินข้าวก่อน' }); return false; }
+    if (Date.now() - p.cd < 1500) { ack({ ok: false, msg: 'ช้าหน่อย รอสักครู่' }); return false; }
+    return true;
+  };
+  socket.on('jobStart', (kind, ack) => {
+    if (!p) return;
+    if (kind === 'cook') {
+      if (p.career !== 'food') return ack({ ok: false, msg: 'เฉพาะคนขายอาหาร' });
+      if (!near(p, 'restaurant')) return ack({ ok: false, msg: 'ต้องอยู่ที่ร้านอาหาร' });
+      if (!gate(ack)) return;
+      if (p.ingredients < 1) return ack({ ok: false, msg: 'วัตถุดิบหมด ไปซื้อที่ร้านชำ' });
+      const key = Object.keys(RECIPES)[rand(Object.keys(RECIPES).length)], r = RECIPES[key];
+      p.job = { kind, key, t0: Date.now() };
+      return ack({ ok: true, spec: { name: r.name, need: r.need, palette: PALETTE } });
+    }
+    if (kind === 'counter') {
+      if (p.career !== 'grocer') return ack({ ok: false, msg: 'เฉพาะเจ้าของร้านชำ' });
+      if (!near(p, 'shop')) return ack({ ok: false, msg: 'ต้องอยู่ที่ร้านชำ' });
+      if (!gate(ack)) return;
+      const customers = Array.from({ length: 3 }, () => {
+        const items = Array.from({ length: 2 + rand(3) }, () => { const [e, n, pr] = PRODUCTS[rand(PRODUCTS.length)]; return { e, n, p: pr }; });
+        const total = items.reduce((a, x) => a + x.p, 0);
+        const bills = BILLS.filter(b => b >= total);
+        return { items, total, paid: bills[rand(Math.min(2, bills.length))] };
+      });
+      p.job = { kind, customers, t0: Date.now() };
+      return ack({ ok: true, spec: { customers: customers.map(({ items, paid }) => ({ items, paid })) } });
+    }
+    ack({ ok: false, msg: 'ไม่รู้จักงานนี้' });
+  });
+  socket.on('jobDone', (ans, ack) => {
+    const j = p && p.job;
+    if (!j) return ack({ ok: false, msg: 'ไม่มีงานที่ค้างอยู่' });
+    p.job = null;
+    const dt = Date.now() - j.t0;
+    if (j.kind === 'cook') {
+      if (dt < 4000 || p.ingredients < 1) return ack({ ok: false, msg: 'ผลงานไม่ถูกต้อง ลองใหม่' });
+      const r = RECIPES[j.key], pool = [...r.need];
+      let extra = 0;
+      for (const id of (Array.isArray(ans?.items) ? ans.items : []).slice(0, 20)) {
+        const i = pool.indexOf(id);
+        if (i < 0) extra++; else pool.splice(i, 1);
+      }
+      const wrong = pool.length + extra, q = Math.max(0, 1 - wrong / r.need.length);
+      const tip = wrong === 0 ? Math.round(r.pay * 0.2 * Math.max(0, Math.min(1, Number(ans?.heat) || 0))) : 0;
+      const pay = Math.round(r.pay * q) + tip;
+      p.ingredients--; p.money += pay; p.cd = Date.now();
+      return ack({ ok: true, msg: wrong ? `${r.name} ผิดสูตร ${wrong} จุด +${pay}` : `${r.name} ถูกสูตร! +${pay}` + (tip ? ` (ทิป ${tip})` : '') });
+    }
+    if (j.kind === 'counter') {
+      if (dt < 2500 * j.customers.length) return ack({ ok: false, msg: 'ผลงานไม่ถูกต้อง ลองใหม่' });
+      const ch = Array.isArray(ans?.changes) ? ans.changes : [];
+      const ok = j.customers.filter((c, i) => Number(ch[i]) === c.paid - c.total).length;
+      const pay = ok * 12 + (ok === j.customers.length ? 10 : 0);
+      p.money += pay; p.cd = Date.now();
+      return ack({ ok: true, msg: `ทอนถูก ${ok}/${j.customers.length} คน +${pay}` });
+    }
   });
 
   socket.on('deposit', (amt, ack) => {
