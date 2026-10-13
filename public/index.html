@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>เมืองอาชีพ</title>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#14213d;--panel:#1d2b53;--line:#3b4f94;--lime:#9be564;--gold:#ffd23f;--red:#ff5e5b;--text:#f4f7ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ink);color:var(--text);font-family:"Sarabun",system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh}
+#hud{width:100%;max-width:800px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:8px 10px;background:var(--panel);border-bottom:3px solid var(--line);font-weight:700}
+#hud .bar{width:110px;height:12px;background:#0b132b;border:2px solid var(--line)}
+#hud .bar i{display:block;height:100%;background:var(--lime);width:100%}
+#wrap{position:relative;width:100%;max-width:800px}
+canvas{width:100%;height:auto;display:block;image-rendering:pixelated;background:#5aa65a;touch-action:none}
+.panel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92%,380px);background:var(--panel);border:3px solid var(--gold);padding:14px;display:none}
+.panel h3{margin:0 0 8px}
+button{font:inherit;font-weight:700;background:var(--gold);color:var(--ink);border:0;border-bottom:4px solid #b88f00;padding:8px 12px;margin:3px 3px 3px 0;cursor:pointer}
+button:disabled{background:#6b7399;border-color:#4a5174;color:#c8cde6;cursor:not-allowed}
+button:focus-visible,input:focus-visible{outline:3px solid #fff;outline-offset:2px}
+input{font:inherit;padding:8px;width:100%;margin:4px 0 8px;border:2px solid var(--line);background:#0b132b;color:var(--text)}
+#toast{position:absolute;top:8px;left:50%;transform:translateX(-50%);background:#000c;border:2px solid var(--gold);padding:6px 12px;display:none;max-width:90%;text-align:center}
+#pad{display:none;gap:6px;margin:8px;grid-template-columns:repeat(3,56px)}
+#pad button{height:48px;font-size:1.2rem}
+@media (pointer:coarse){#pad{display:grid}}
+.arrow{font-size:2rem;letter-spacing:.4em}
+.muted{color:#aab4e0;font-size:.9rem}
+#teacher button{background:var(--lime);border-color:#5da02d}
+</style>
+</head>
+<body>
+<div id="hud" hidden>
+  <span id="hNick"></span><span id="hCareer"></span>
+  <span>💰 <b id="hMoney">0</b></span>
+  <span>🍚 <span class="bar"><i id="hHunger"></i></span></span>
+  <span id="hDay"></span>
+</div>
+<div id="wrap">
+  <canvas id="cv" width="800" height="520"></canvas>
+  <div id="toast"></div>
+
+  <div class="panel" id="pLogin" style="display:block">
+    <h3>เมืองอาชีพ</h3>
+    <label for="code">รหัสนักเรียน</label><input id="code" autocomplete="off">
+    <label for="nick">ชื่อเล่นในเกม</label><input id="nick" maxlength="12" autocomplete="off">
+    <div id="pwRow" hidden><label for="pw">รหัสผ่านครู</label><input id="pw" type="password"></div>
+    <button id="btnLogin">เข้าเกม</button>
+    <p class="muted" id="loginMsg"></p>
+  </div>
+
+  <div class="panel" id="pPick">
+    <h3>เลือกอาชีพ</h3>
+    <p id="pickInfo" class="muted"></p>
+    <div id="pickBtns"></div>
+  </div>
+
+  <div class="panel" id="pShop">
+    <h3>ร้านชำ</h3>
+    <button id="bMeal"></button><button id="bIng"></button><button id="bStock">จัดของเข้าร้าน</button>
+    <p class="muted">จัดของเข้าร้านได้เงินเล็กน้อย เจ้าของร้านชำได้เงินมากกว่า</p>
+    <button data-close>ปิด</button>
+  </div>
+
+  <div class="panel" id="pRest">
+    <h3>ร้านอาหาร</h3>
+    <p id="restInfo" class="muted"></p>
+    <div id="cookGame" hidden>
+      <div class="arrow" id="seq"></div>
+      <p class="muted">กดลูกศรตามลำดับให้ครบ</p>
+    </div>
+    <button id="bCook">เริ่มทำอาหาร</button><button data-close>ปิด</button>
+  </div>
+
+  <div class="panel" id="teacher" style="top:auto;bottom:8px;transform:translateX(-50%);border-color:var(--lime)">
+    <h3>แผงควบคุมครู</h3>
+    <p class="muted" id="tInfo"></p>
+    <button data-t="select">เริ่มเลือกอาชีพ</button><button data-t="skip">ข้ามคิว</button>
+    <button data-t="play">เริ่มเกม</button><button data-t="pause">หยุด/เล่นต่อ</button>
+  </div>
+</div>
+<div id="pad">
+  <span></span><button data-k="ArrowUp">▲</button><span></span>
+  <button data-k="ArrowLeft">◀</button><button data-k="ArrowDown">▼</button><button data-k="ArrowRight">▶</button>
+</div>
+<p class="muted">เดิน: ลูกศรหรือ WASD &nbsp; โต้ตอบ: เดินเข้าใกล้อาคารแล้วกด E</p>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const socket = io();
+const cv = $('cv'), g = cv.getContext('2d');
+g.imageSmoothingEnabled = false;
+let me = null, world = null, others = [], B = {}, cfg = {}, teacher = false;
+let pos = { x: 400, y: 300 }, keys = {};
+const COLORS = { gov: '#4cc9f0', food: '#ff9f1c', grocer: '#9be564', null: '#e0e0e0' };
+const LABEL = { gov: 'ข้าราชการ', food: 'คนขายอาหาร', grocer: 'เจ้าของร้านชำ' };
+
+function toast(m) {
+  const t = $('toast'); t.textContent = m; t.style.display = 'block';
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', 3200);
+}
+const show = (id, on) => $(id).style.display = on ? 'block' : 'none';
+document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => { show('pShop', 0); show('pRest', 0); stopCook(); });
+
+// ----- ล็อกอิน -----
+$('code').addEventListener('input', () => $('pwRow').hidden = $('code').value.trim().toUpperCase() !== 'TEACHER');
+$('btnLogin').onclick = () => {
+  socket.emit('login', { code: $('code').value, nick: $('nick').value, password: $('pw').value }, r => {
+    if (!r.ok) return $('loginMsg').textContent = r.msg;
+    show('pLogin', 0);
+    if (r.teacher) { teacher = true; show('teacher', 1); return; }
+    me = r.me; B = r.buildings; cfg = r.cfg; pos = { x: 400, y: 300 };
+    $('hud').hidden = false; refreshHud();
+  });
+};
+socket.on('kicked', () => { alert('มีการเข้าสู่ระบบจากอุปกรณ์อื่น'); location.reload(); });
+
+// ----- สถานะจากเซิร์ฟเวอร์ -----
+socket.on('me', m => { me = m; refreshHud(); });
+socket.on('players', l => others = l);
+socket.on('toast', toast);
+socket.on('world', w => { world = w; updateWorldUi(); });
+
+function refreshHud() {
+  if (!me) return;
+  $('hNick').textContent = me.nick;
+  $('hCareer').textContent = me.career ? LABEL[me.career] : 'ว่างงาน';
+  $('hMoney').textContent = me.money;
+  $('hHunger').style.width = me.hunger + '%';
+  $('hHunger').style.background = me.hunger < 25 ? 'var(--red)' : 'var(--lime)';
+}
+function updateWorldUi() {
+  const mins = Math.floor((world.dayLen - world.elapsed) / 60), secs = (world.dayLen - world.elapsed) % 60;
+  $('hDay').textContent = `วันที่ ${world.day} (อีก ${mins}:${String(secs).padStart(2, '0')})` + (world.paused ? ' ⏸' : '');
+  if (teacher) {
+    $('tInfo').textContent = `สถานะ: ${world.phase}${world.paused ? ' (หยุดอยู่)' : ''} | คิวเลือก: ${world.pickerNick || '-'}`;
+    return;
+  }
+  const picking = world.phase === 'selecting' && me && !me.career;
+  show('pPick', picking);
+  if (picking) {
+    const myTurn = world.pickerCode === me.code;
+    $('pickInfo').textContent = myTurn ? 'ถึงคิวของคุณแล้ว เลือกได้เลย' : `รอคิว... ตอนนี้ถึงคิวของ ${world.pickerNick}`;
+    $('pickBtns').innerHTML = '';
+    for (const k in world.careers) {
+      const c = world.careers[k], b = document.createElement('button');
+      b.textContent = `${c.name} (เหลือ ${world.seats[k]})` + (c.minGrade ? ` เกรด ${c.minGrade.toFixed(2)}+` : '');
+      b.disabled = !myTurn || world.seats[k] <= 0 || me.grade < c.minGrade;
+      b.onclick = () => socket.emit('pick', k, r => !r.ok && toast(r.msg));
+      $('pickBtns').appendChild(b);
+    }
+  }
+}
+document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => socket.emit('teacher', b.dataset.t, () => {}));
+
+// ----- ปฏิสัมพันธ์กับอาคาร -----
+const act = (ev, after) => socket.emit(ev, null, r => { toast(r.msg); after && after(r); });
+function nearBuilding() {
+  for (const k in B) if (Math.hypot(pos.x - B[k].x, pos.y - B[k].y) < 90) return k;
+  return null;
+}
+$('bMeal').onclick = () => act('buyMeal');
+$('bIng').onclick = () => act('buyIngredient');
+$('bStock').onclick = () => act('restock');
+function openBuilding() {
+  const n = nearBuilding();
+  if (n === 'shop') {
+    $('bMeal').textContent = `ซื้ออาหาร (${cfg.meal})`;
+    $('bIng').textContent = `ซื้อวัตถุดิบ (${cfg.ingredient})`;
+    show('pShop', 1);
+  } else if (n === 'restaurant') {
+    $('restInfo').textContent = me.career === 'food'
+      ? `วัตถุดิบที่มี: ${me.ingredients} | ขายได้จานละ ${cfg.dish}`
+      : 'ร้านนี้สำหรับคนขายอาหาร';
+    $('bCook').disabled = me.career !== 'food';
+    show('pRest', 1);
+  }
+}
+
+// ----- มินิเกมทำอาหาร: กดลูกศร 3 ตัวตามลำดับ -----
+let seq = [], si = 0;
+const AR = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' };
+$('bCook').onclick = () => {
+  seq = Array.from({ length: 3 }, () => Object.keys(AR)[Math.floor(Math.random() * 4)]); si = 0;
+  $('cookGame').hidden = false; renderSeq();
+};
+function renderSeq() { $('seq').textContent = seq.map((k, i) => i < si ? '✔' : AR[k]).join(' '); }
+function stopCook() { seq = []; $('cookGame').hidden = true; }
+function cookKey(k) {
+  if (!seq.length) return false;
+  if (k === seq[si]) { si++; renderSeq(); if (si === seq.length) { stopCook(); act('cook'); } }
+  else { toast('ผิดลำดับ ลองใหม่'); stopCook(); }
+  return true;
+}
+
+// ----- การควบคุม -----
+const MAP = { w: 'ArrowUp', s: 'ArrowDown', a: 'ArrowLeft', d: 'ArrowRight' };
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  const k = MAP[e.key.toLowerCase()] || e.key;
+  if (k === 'e' || k === 'E') return openBuilding();
+  if (AR[k] && cookKey(k)) { e.preventDefault(); return; }
+  keys[k] = true;
+});
+addEventListener('keyup', e => keys[MAP[e.key.toLowerCase()] || e.key] = false);
+document.querySelectorAll('#pad [data-k]').forEach(b => {
+  b.onpointerdown = () => { if (!cookKey(b.dataset.k)) keys[b.dataset.k] = true; };
+  b.onpointerup = b.onpointerleave = () => keys[b.dataset.k] = false;
+});
+cv.addEventListener('dblclick', openBuilding);
+
+// ----- วาดฉาก -----
+function px(x, y, w, h, c) { g.fillStyle = c; g.fillRect(Math.round(x), Math.round(y), w, h); }
+function building(b, label, color) {
+  px(b.x - 40, b.y - 36, 80, 56, '#6b4f3a'); px(b.x - 46, b.y - 50, 92, 18, color);
+  px(b.x - 10, b.y - 2, 20, 22, '#2b1d14');
+  g.fillStyle = '#fff'; g.font = 'bold 14px Sarabun'; g.textAlign = 'center'; g.fillText(label, b.x, b.y + 38);
+}
+function person(x, y, color, nick) {
+  px(x - 8, y - 4, 16, 18, color); px(x - 6, y - 16, 12, 12, '#f2c9a0'); px(x - 8, y + 14, 6, 4, '#222'); px(x + 2, y + 14, 6, 4, '#222');
+  g.fillStyle = '#fff'; g.font = 'bold 12px Sarabun'; g.textAlign = 'center'; g.fillText(nick, x, y - 22);
+}
+let last = performance.now(), sendT = 0;
+function loop(t) {
+  const dt = Math.min(0.05, (t - last) / 1000); last = t;
+  if (me && !document.querySelector('.panel[style*="block"]:not(#teacher)')) {
+    const sp = 130;
+    if (keys.ArrowLeft) pos.x -= sp * dt; if (keys.ArrowRight) pos.x += sp * dt;
+    if (keys.ArrowUp) pos.y -= sp * dt; if (keys.ArrowDown) pos.y += sp * dt;
+    pos.x = Math.max(10, Math.min(790, pos.x)); pos.y = Math.max(10, Math.min(510, pos.y));
+  }
+  sendT += dt; if (me && sendT > 0.1) { sendT = 0; socket.emit('move', pos); }
+
+  px(0, 0, 800, 520, '#5aa65a');
+  for (let i = 0; i < 40; i++) for (let j = 0; j < 26; j++) if ((i * 7 + j * 13) % 11 === 0) px(i * 20 + 6, j * 20 + 6, 4, 4, '#4f9a50');
+  px(0, 250, 800, 48, '#c9b58a'); px(380, 0, 40, 520, '#c9b58a');
+  if (B.shop) { building(B.shop, 'ร้านชำ', '#2a9d8f'); building(B.restaurant, 'ร้านอาหาร', '#e76f51'); }
+  const all = others.filter(o => !me || o.code !== me.code).map(o => ({ ...o }));
+  if (me) all.push({ code: me.code, nick: me.nick, x: pos.x, y: pos.y, career: me.career });
+  all.sort((a, b) => a.y - b.y).forEach(o => person(o.x, o.y, COLORS[o.career] || COLORS.null, o.nick));
+  if (me && nearBuilding()) { g.fillStyle = '#ffd23f'; g.font = 'bold 14px Sarabun'; g.textAlign = 'center'; g.fillText('กด E หรือแตะสองครั้งที่แผนที่', 400, 508); }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
