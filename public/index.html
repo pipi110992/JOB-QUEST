@@ -28,6 +28,11 @@ input{font:inherit;padding:8px;width:100%;margin:4px 0 8px;border:2px solid var(
 .arrow{font-size:2rem;letter-spacing:.4em}
 .muted{color:#aab4e0;font-size:.9rem}
 .green button{background:var(--lime);border-color:#5da02d}
+.plate{font-size:2rem;min-height:2.6rem;margin:6px 0}
+#pal button{font-size:1.5rem;padding:6px 10px}
+#hb{position:relative;height:22px;background:#0b132b;border:2px solid var(--line);margin:10px 0}
+#hz{position:absolute;left:40%;width:20%;top:0;bottom:0;background:var(--lime);opacity:.7}
+#hc{position:absolute;top:-5px;width:6px;height:30px;background:#fff}
 #btnSwitch{background:#ff9f1c;border-color:#b86a00;padding:4px 8px;margin:0}
 </style>
 </head>
@@ -61,7 +66,7 @@ input{font:inherit;padding:8px;width:100%;margin:4px 0 8px;border:2px solid var(
 
   <div class="panel" id="pShop">
     <h3>ร้านชำ</h3>
-    <button id="bMeal"></button><button id="bIng"></button><button id="bStock">จัดของเข้าร้าน</button>
+    <button id="bMeal"></button><button id="bIng"></button><button id="bStock">จัดของเข้าร้าน</button><button id="bCounter">เปิดเคาน์เตอร์ (ทอนเงิน)</button>
     <p class="muted">จัดของเข้าร้านได้เงินเล็กน้อย เจ้าของร้านชำได้เงินมากกว่า</p>
     <button data-close>ปิด</button>
   </div>
@@ -81,6 +86,8 @@ input{font:inherit;padding:8px;width:100%;margin:4px 0 8px;border:2px solid var(
     <div id="game" hidden><div class="arrow" id="seq"></div><p class="muted">กดลูกศรตามลำดับให้ครบ</p></div>
     <button id="bWork">เริ่มทำงาน</button><button data-close>ปิด</button>
   </div>
+
+  <div class="panel" id="pMini"><h3 id="mTitle"></h3><div id="mBody"></div><button data-close>ปิด</button></div>
 
   <div class="panel green" id="teacher" style="top:auto;bottom:8px;transform:translateX(-50%);border-color:var(--lime)">
     <h3>แผงควบคุมครู</h3>
@@ -109,7 +116,8 @@ function toast(m) {
   clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', 3500);
 }
 const show = (id, on) => $(id).style.display = on ? 'block' : 'none';
-const closeAll = () => { ['pShop', 'pBank', 'pWork'].forEach(i => show(i, 0)); if (switching) { switching = false; show('pPick', 0); } stopGame(); };
+let heatT = null;
+const closeAll = () => { clearInterval(heatT); ['pShop', 'pBank', 'pWork', 'pMini'].forEach(i => show(i, 0)); if (switching) { switching = false; show('pPick', 0); } stopGame(); };
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeAll);
 
 // ----- ล็อกอิน (และล็อกอินใหม่อัตโนมัติเมื่อหลุดการเชื่อมต่อ) -----
@@ -194,13 +202,15 @@ function openBuilding() {
   const n = nearBuilding(); if (!n || !me || !world) return;
   const c = me.career && world.careers[me.career];
   if (n === 'shop') {
+    $('bCounter').hidden = me.career !== 'grocer'; $('bStock').hidden = me.career === 'grocer';
     $('bMeal').textContent = `ซื้ออาหาร (${cfg.meal})`; $('bIng').textContent = `ซื้อวัตถุดิบ (${cfg.ingredient})`; show('pShop', 1);
   } else if (n === 'bank') {
     $('bkCash').textContent = me.money; $('bkBank').textContent = me.bank;
     $('rates').innerHTML = 'ดอกเบี้ยเงินฝากต่อวัน (ขั้นบันได)<br>' + fmt(cfg.interest.map(([a, b]) => [a > 1e8 ? 1e9 : a, b])) +
       '<br>ภาษีเงินสดต่อวัน (ไม่รวมเงินฝาก)<br>' + fmt(cfg.tax.map(([a, b]) => [a > 1e8 ? 1e9 : a, b]));
     show('pBank', 1);
-  } else if (c && c.site === n) {
+  } else if (n === 'restaurant' && me.career === 'food') startJob('cook');
+  else if (c && c.site === n) {
     $('wTitle').textContent = `${B[n].name} — ${c.name}`;
     $('wInfo').textContent = `ได้ครั้งละ ${c.pay}` + (me.career === 'food' ? ` | วัตถุดิบที่มี: ${me.ingredients}` : '');
     show('pWork', 1);
@@ -208,7 +218,56 @@ function openBuilding() {
 }
 setInterval(() => { if ($('pBank').style.display === 'block' && me) { $('bkCash').textContent = me.money; $('bkBank').textContent = me.bank; } }, 500);
 
-// ----- มินิเกมลูกศร -----
+// ----- มินิเกมเฉพาะอาชีพ: ทำอาหาร / ทอนเงินที่ร้านชำ -----
+let job = null, plate = [];
+const miniOpen = t => { $('mTitle').textContent = t; show('pMini', 1); };
+function startJob(kind) {
+  socket.emit('jobStart', kind, r => {
+    if (!r.ok) return toast(r.msg);
+    job = r.spec; kind === 'cook' ? cookUI() : counterUI();
+  });
+}
+$('bCounter').onclick = () => { closeAll(); startJob('counter'); };
+function cookUI() {
+  plate = []; miniOpen('ร้านอาหาร');
+  const em = id => job.palette.find(x => x.id === id);
+  $('mBody').innerHTML = `<p><b>ออเดอร์: ${job.name}</b></p><p>ต้องใช้: ${job.need.map(id => em(id).e + em(id).n).join('  ')}</p>` +
+    `<p class="plate" id="plate">จานว่าง</p><div id="pal"></div><button id="mClear">ล้างจาน</button><button id="mFire">ลงกระทะ 🔥</button>`;
+  const draw = () => $('plate').textContent = plate.length ? plate.map(id => em(id).e).join(' ') : 'จานว่าง';
+  job.palette.forEach(x => {
+    const b = document.createElement('button'); b.textContent = x.e; b.title = x.n;
+    b.onclick = () => { if (plate.length < 8) plate.push(x.id); draw(); };
+    $('pal').appendChild(b);
+  });
+  $('mClear').onclick = () => { plate = []; draw(); };
+  $('mFire').onclick = () => plate.length ? heatUI() : toast('ใส่วัตถุดิบลงจานก่อน');
+}
+function heatUI() {
+  $('mBody').innerHTML = '<p>กด "ยกลง!" ตอนไฟพอดี (เส้นขาวอยู่ในช่องเขียว)</p><div id="hb"><i id="hz"></i><b id="hc"></b></div><button id="mStop">ยกลง!</button>';
+  const t0 = performance.now(); let pos = 0;
+  heatT = setInterval(() => { pos = (Math.sin((performance.now() - t0) / 350) + 1) / 2; $('hc').style.left = pos * 100 + '%'; }, 30);
+  $('mStop').onclick = () => {
+    clearInterval(heatT);
+    const heat = Math.max(0, Math.min(1, 1 - (Math.abs(pos - 0.5) - 0.1) / 0.4));
+    socket.emit('jobDone', { items: plate, heat }, r => { toast(r.msg); closeAll(); });
+  };
+}
+function counterUI() {
+  let i = 0; const ans = []; miniOpen('เคาน์เตอร์ร้านชำ');
+  const next = () => {
+    if (i >= job.customers.length) return socket.emit('jobDone', { changes: ans }, r => { toast(r.msg); closeAll(); });
+    const c = job.customers[i];
+    $('mBody').innerHTML = `<p>ลูกค้าคนที่ ${i + 1}/${job.customers.length}</p>` + c.items.map(x => `<p>${x.e} ${x.n} — ${x.p} บาท</p>`).join('') +
+      `<p>ลูกค้าจ่าย <b>${c.paid}</b> บาท ต้องทอนเท่าไร?</p><input id="chg" type="number" inputmode="numeric"><button id="mOk">ทอนเงิน</button>`;
+    $('mOk').onclick = () => {
+      const v = Number($('chg').value), right = c.paid - c.items.reduce((s, x) => s + x.p, 0);
+      ans.push(v); toast(v === right ? 'ถูกต้อง ✔' : `ผิด ✖ ที่ถูกคือ ${right}`); i++; next();
+    };
+  };
+  next();
+}
+
+// ----- มินิเกมลูกศร (อาชีพอื่นๆ) -----
 let seq = [], si = 0;
 const AR = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' };
 $('bWork').onclick = () => {
